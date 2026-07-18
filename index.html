@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Link Collector</title>
+    <title>Video Transcript Extractor</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -32,6 +32,13 @@
         font-size: 1.6rem;
       }
 
+      p.subtitle {
+        margin-top: -8px;
+        margin-bottom: 16px;
+        color: #6b7280;
+        font-size: 0.9rem;
+      }
+
       form {
         display: flex;
         flex-direction: column;
@@ -55,8 +62,13 @@
         cursor: pointer;
       }
 
-      button:hover {
+      button:hover:not(:disabled) {
         background: #1d4ed8;
+      }
+
+      button:disabled {
+        background: #93c5fd;
+        cursor: not-allowed;
       }
 
       .result-wrap {
@@ -74,8 +86,10 @@
         padding: 12px;
         border-radius: 8px;
         background: #eff6ff;
-        word-break: break-all;
+        word-break: break-word;
         white-space: pre-wrap;
+        max-height: 320px;
+        overflow-y: auto;
       }
 
       .copy-btn {
@@ -88,29 +102,45 @@
         cursor: pointer;
       }
 
-      .copy-btn:hover {
+      .copy-btn:hover:not(:disabled) {
         background: #115e59;
+      }
+
+      .copy-btn:disabled {
+        background: #99f6e4;
+        cursor: not-allowed;
       }
 
       .error {
         color: #b91c1c;
         background: #fef2f2;
       }
+
+      .loading {
+        color: #1d4ed8;
+        background: #eff6ff;
+      }
     </style>
   </head>
   <body>
     <div class="card">
-      <h1>Enter a link</h1>
+      <h1>Get a video transcript</h1>
+      <p class="subtitle">Paste a YouTube or Instagram link below.</p>
       <form id="linkForm">
-        <input id="linkInput" type="url" placeholder="https://example.com" required />
-        <button type="submit">Save Link</button>
+        <input
+          id="linkInput"
+          type="url"
+          placeholder="https://www.youtube.com/watch?v=..."
+          required
+        />
+        <button type="submit" id="submitBtn">Get Transcript</button>
       </form>
       <div class="result-wrap">
         <div class="result-header">
           <strong>Output</strong>
-          <button type="button" class="copy-btn" id="copyBtn">Copy</button>
+          <button type="button" class="copy-btn" id="copyBtn" disabled>Copy</button>
         </div>
-        <div id="result" class="result">Your link will appear here.</div>
+        <div id="result" class="result">Your transcript will appear here.</div>
       </div>
     </div>
 
@@ -119,19 +149,30 @@
       const input = document.getElementById('linkInput');
       const result = document.getElementById('result');
       const copyBtn = document.getElementById('copyBtn');
+      const submitBtn = document.getElementById('submitBtn');
+
+      let currentTranscript = '';
+
+      function setResult(text, className) {
+        // textContent, never innerHTML — transcript text is untrusted content
+        // and must never be parsed as HTML.
+        result.textContent = text;
+        result.className = 'result' + (className ? ' ' + className : '');
+      }
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();
 
         const value = input.value.trim();
         if (!value) {
-          result.textContent = 'Please enter a valid link.';
-          result.className = 'result error';
+          setResult('Please enter a valid link.', 'error');
           return;
         }
 
-        result.textContent = 'Processing your link...';
-        result.className = 'result';
+        submitBtn.disabled = true;
+        copyBtn.disabled = true;
+        currentTranscript = '';
+        setResult('Processing your link... this can take a little while for longer videos.', 'loading');
 
         try {
           const response = await fetch('/process-link', {
@@ -140,34 +181,52 @@
             body: JSON.stringify({ link: value })
           });
 
-          const data = await response.json();
+          const rawText = await response.text();
+          let data;
+          try {
+            data = JSON.parse(rawText);
+          } catch (parseErr) {
+            // Show what actually came back instead of a generic message —
+            // this makes it obvious whether it's an HTML error page, a
+            // wrong-port response, an empty body, etc.
+            const preview = rawText ? rawText.slice(0, 300) : '(empty response)';
+            throw new Error(
+              `Server did not return JSON (status ${response.status}). Raw response: ${preview}`
+            );
+          }
 
           if (!response.ok || !data.success) {
             throw new Error(data.error || 'Unable to process the link.');
           }
 
-          const title = data.title ? `<strong>${data.title}</strong><br><br>` : '';
-          result.innerHTML = `${title}${data.transcript}`;
+          const transcript = (data.transcript || '').trim();
+
+          if (!transcript) {
+            setResult('No transcript was returned for this link.', 'error');
+            return;
+          }
+
+          currentTranscript = transcript;
+          setResult(transcript, '');
+          copyBtn.disabled = false;
         } catch (error) {
-          result.textContent = error.message;
-          result.className = 'result error';
+          setResult(error.message || 'Something went wrong. Please try again.', 'error');
+        } finally {
+          submitBtn.disabled = false;
         }
       });
 
       copyBtn.addEventListener('click', async function () {
-        const textToCopy = result.innerText;
-        if (!textToCopy || textToCopy === 'Your link will appear here.') {
+        if (!currentTranscript) {
           return;
         }
 
         try {
-          await navigator.clipboard.writeText(textToCopy);
+          await navigator.clipboard.writeText(currentTranscript);
           copyBtn.textContent = 'Copied!';
-          setTimeout(() => {
-            copyBtn.textContent = 'Copy';
-          }, 1200);
         } catch (error) {
           copyBtn.textContent = 'Failed';
+        } finally {
           setTimeout(() => {
             copyBtn.textContent = 'Copy';
           }, 1200);
