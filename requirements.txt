@@ -1,0 +1,5 @@
+flask==3.0.3
+gunicorn==22.0.0
+yt-dlp>=2024.7.1
+webvtt-py==0.4.6
+openai-whisper==20231117
